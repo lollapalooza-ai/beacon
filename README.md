@@ -5,7 +5,7 @@ Beacon autonomously discovers, bids on, provisions, and decommissions cloud spot
 ## Features (Community Edition MVP)
 
 - **Model-Agnostic LLM Layer** — Ollama, OpenAI, Anthropic, and Gemini support behind a single `Provider` interface
-- **AWS EC2 Spot Integration** — Real spot pricing queries and instance provisioning via AWS SDK v2
+- **Multi-Cloud Spot Integration** — Real spot pricing queries and instance provisioning via AWS EC2 and Google Cloud (GCP) Spot VMs
 - **Autonomous Lifecycle** — Full state machine: Discovery → Bidding → Authorization → Provisioning → Monitoring → Decommission
 - **Crash Recovery** — SQLite state persistence detects and cleans up orphaned compute on restart
 - **Safety Guards** — Circuit breakers, rate limiters, retry limits, and budget enforcement prevent runaway costs
@@ -22,10 +22,11 @@ export BEACON_LLM_PROVIDER=ollama
 export BEACON_LLM_MODEL=llama3
 beacon run --intent "Train ResNet on 4xA100 under $50"
 
-# Run with OpenAI
+# Run with OpenAI across multi-cloud (AWS + GCP)
 export BEACON_LLM_PROVIDER=openai
 export BEACON_LLM_API_KEY=sk-...
 export BEACON_LLM_MODEL=gpt-4o
+export BEACON_GCP_PROJECT="your-gcp-project-id"
 beacon run --intent "Run inference on T4 GPU in us-west-2" --budget 25
 
 # Check active workloads
@@ -47,6 +48,9 @@ All configuration is via environment variables:
 | `BEACON_LLM_API_KEY` | — | API key (required for hosted providers) |
 | `BEACON_AWS_REGION` | `us-east-1` | Default AWS region |
 | `BEACON_AWS_PROFILE` | — | AWS credentials profile |
+| `BEACON_GCP_PROJECT` | — | GCP Project ID (Enables GCP adapter if set) |
+| `BEACON_GCP_REGION` | `us-central1` | Default GCP region |
+| `BEACON_GCP_ZONE` | `us-central1-a` | Default GCP zone |
 | `BEACON_MAX_BUDGET` | `100.0` | Global maximum budget per workload (USD) |
 | `BEACON_DB_PATH` | `beacon.db` | SQLite database path |
 | `BEACON_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |

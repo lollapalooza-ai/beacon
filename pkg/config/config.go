@@ -20,6 +20,11 @@ type Config struct {
 	AWSRegion  string
 	AWSProfile string // optional AWS profile name
 
+	// GCP settings
+	GCPProjectID string // GCP Project ID (if set, enables GCP adapter)
+	GCPRegion    string
+	GCPZone      string
+
 	// Budget & payment
 	MaxBudget float64 // maximum budget in USD per workload
 
@@ -43,6 +48,8 @@ func DefaultConfig() *Config {
 		LLMModel:            "llama3",
 		LLMEndpoint:         "http://localhost:11434",
 		AWSRegion:           "us-east-1",
+		GCPRegion:           "us-central1",
+		GCPZone:             "us-central1-a",
 		MaxBudget:           100.0,
 		DBPath:              "beacon.db",
 		LogLevel:            "info",
@@ -75,6 +82,15 @@ func LoadFromEnv() *Config {
 	}
 	if v := os.Getenv("BEACON_AWS_PROFILE"); v != "" {
 		cfg.AWSProfile = v
+	}
+	if v := os.Getenv("BEACON_GCP_PROJECT"); v != "" {
+		cfg.GCPProjectID = v
+	}
+	if v := os.Getenv("BEACON_GCP_REGION"); v != "" {
+		cfg.GCPRegion = v
+	}
+	if v := os.Getenv("BEACON_GCP_ZONE"); v != "" {
+		cfg.GCPZone = v
 	}
 	if v := os.Getenv("BEACON_MAX_BUDGET"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {

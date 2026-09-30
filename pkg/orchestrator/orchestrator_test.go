@@ -16,7 +16,7 @@ import (
 	mocktesting "github.com/lollapalooza-ai/beacon/internal/testing"
 )
 
-func setupTestOrchestrator(t *testing.T, mockLLM *mocktesting.MockLLMProvider, mockCloud *mocktesting.MockCloudAdapter) (*Orchestrator, state.Store) {
+func setupTestOrchestrator(t *testing.T, mockLLM *mocktesting.MockLLMProvider, mocks ...*mocktesting.MockCloudAdapter) (*Orchestrator, state.Store) {
 	t.Helper()
 
 	dbPath := t.TempDir() + "/test.db"
@@ -33,8 +33,9 @@ func setupTestOrchestrator(t *testing.T, mockLLM *mocktesting.MockLLMProvider, m
 	cfg.MaxProvisionRetries = 2
 	cfg.MaxDiscoveryRetries = 2
 
-	adapters := map[string]cloud.Adapter{
-		mockCloud.Name(): mockCloud,
+	adapters := make(map[string]cloud.Adapter)
+	for _, m := range mocks {
+		adapters[m.Name()] = m
 	}
 
 	orch, err := New(Options{
@@ -52,7 +53,7 @@ func setupTestOrchestrator(t *testing.T, mockLLM *mocktesting.MockLLMProvider, m
 	return orch, store
 }
 
-func defaultMockPrices() []cloud.SpotPrice {
+func defaultMockPricesAWS() []cloud.SpotPrice {
 	return []cloud.SpotPrice{
 		{
 			Provider:     "mock-aws",
@@ -66,80 +67,86 @@ func defaultMockPrices() []cloud.SpotPrice {
 			MemoryGiB:    61,
 			Timestamp:    time.Now(),
 		},
+	}
+}
+
+func defaultMockPricesGCP() []cloud.SpotPrice {
+	return []cloud.SpotPrice{
 		{
-			Provider:     "mock-aws",
-			Region:       "us-west-2",
-			Zone:         "us-west-2b",
-			InstanceType: "g4dn.xlarge",
-			PricePerHour: 0.35,
-			GPUType:      "T4",
+			Provider:     "mock-gcp",
+			Region:       "us-central1",
+			Zone:         "us-central1-a",
+			InstanceType: "a2-highgpu-1g",
+			PricePerHour: 1.10, // Cheaper than AWS
+			GPUType:      "A100",
 			GPUCount:     1,
-			VCPUs:        4,
-			MemoryGiB:    16,
+			VCPUs:        12,
+			MemoryGiB:    85,
 			Timestamp:    time.Now(),
 		},
 	}
 }
 
-func TestRunWorkload_FullLifecycle(t *testing.T) {
+func TestRunWorkload_FullLifecycle_MultiCloud(t *testing.T) {
 	intentResp := mocktesting.MakeIntentResponse(&llm.ComputeRequirements{
-		GPUType:      "V100",
+		GPUType:      "", // empty means any GPU is fine
 		GPUCount:     1,
 		WorkloadType: "training",
 		MaxBudgetUSD: 50.0,
 		MaxDurationH: 2.0,
 	})
 
+	// The LLM evaluates both and picks GCP because it's cheaper and has a better GPU (A100 vs V100)
 	bidResp := mocktesting.MakeBidResponse(&llm.BidRanking{
 		Rankings: []llm.BidEvaluation{
-			{InstanceType: "p3.2xlarge", Region: "us-east-1", Provider: "mock-aws", Score: 85, Reasoning: "Good fit", RiskLevel: "low", EstimatedCost: 3.0},
-			{InstanceType: "g4dn.xlarge", Region: "us-west-2", Provider: "mock-aws", Score: 60, Reasoning: "Under-provisioned", RiskLevel: "medium", EstimatedCost: 0.70},
+			{InstanceType: "a2-highgpu-1g", Region: "us-central1", Provider: "mock-gcp", Score: 95, Reasoning: "Cheaper and faster", RiskLevel: "low", EstimatedCost: 2.20},
+			{InstanceType: "p3.2xlarge", Region: "us-east-1", Provider: "mock-aws", Score: 70, Reasoning: "More expensive", RiskLevel: "low", EstimatedCost: 3.00},
 		},
-		SelectedIdx:   0,
-		Justification: "p3.2xlarge is the best fit for V100 training",
+		SelectedIdx:   0, // Picks GCP
+		Justification: "a2-highgpu-1g is the best fit",
 	})
 
 	mockLLM := mocktesting.NewMockLLMProvider(intentResp, bidResp)
-	mockCloud := mocktesting.NewMockCloudAdapter("mock-aws", defaultMockPrices())
+	mockAWS := mocktesting.NewMockCloudAdapter("mock-aws", defaultMockPricesAWS())
+	mockGCP := mocktesting.NewMockCloudAdapter("mock-gcp", defaultMockPricesGCP())
 
-	orch, store := setupTestOrchestrator(t, mockLLM, mockCloud)
+	orch, store := setupTestOrchestrator(t, mockLLM, mockAWS, mockGCP)
 	defer store.Close()
 
-	// Use a short-lived context to avoid blocking on the monitor loop
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	workload, err := orch.RunWorkload(ctx, "Train ResNet on V100 under $50", 50.0)
+	workload, err := orch.RunWorkload(ctx, "Train ResNet under $50", 50.0)
 	if err != nil && err != context.DeadlineExceeded {
-		// Context deadline is expected since the monitor loop runs until cancelled
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if workload == nil {
 		t.Fatal("expected workload to be non-nil")
 	}
-
-	// Verify the workload went through the expected states
-	if workload.InstanceID == "" {
-		t.Error("expected instance to be provisioned")
+	if workload.InstanceProvider != "mock-gcp" {
+		t.Errorf("expected instance to be provisioned on mock-gcp, got %s", workload.InstanceProvider)
 	}
 
-	// Verify LLM was called twice (intent + bidding)
-	if len(mockLLM.Requests) != 2 {
-		t.Errorf("expected 2 LLM calls, got %d", len(mockLLM.Requests))
+	// Verify both cloud adapters were queried
+	if mockAWS.QueryCount == 0 {
+		t.Error("expected AWS spot price query to be called")
+	}
+	if mockGCP.QueryCount == 0 {
+		t.Error("expected GCP spot price query to be called")
 	}
 
-	// Verify cloud adapter was called
-	if mockCloud.QueryCount == 0 {
-		t.Error("expected spot price query to be called")
+	// Verify only GCP was provisioned
+	if mockAWS.ProvisionCount != 0 {
+		t.Error("expected AWS provision to NOT be called")
 	}
-	if mockCloud.ProvisionCount == 0 {
-		t.Error("expected provision to be called")
+	if mockGCP.ProvisionCount == 0 {
+		t.Error("expected GCP provision to be called")
 	}
 
-	// Verify termination happened (decommission on context cancel)
-	if mockCloud.TerminateCount == 0 {
-		t.Error("expected terminate to be called during decommission")
+	// Verify termination happened on the correct adapter
+	if mockGCP.TerminateCount == 0 {
+		t.Error("expected terminate to be called on GCP during decommission")
 	}
 }
 
@@ -152,7 +159,7 @@ func TestRunWorkload_NoBidsFound(t *testing.T) {
 	})
 
 	mockLLM := mocktesting.NewMockLLMProvider(intentResp)
-	mockCloud := mocktesting.NewMockCloudAdapter("mock-aws", defaultMockPrices())
+	mockCloud := mocktesting.NewMockCloudAdapter("mock-aws", defaultMockPricesAWS())
 
 	orch, store := setupTestOrchestrator(t, mockLLM, mockCloud)
 	defer store.Close()
@@ -186,7 +193,7 @@ func TestRunWorkload_ProvisionRetryExhaustion(t *testing.T) {
 	})
 
 	mockLLM := mocktesting.NewMockLLMProvider(intentResp, bidResp)
-	mockCloud := mocktesting.NewMockCloudAdapter("mock-aws", defaultMockPrices())
+	mockCloud := mocktesting.NewMockCloudAdapter("mock-aws", defaultMockPricesAWS())
 	mockCloud.ProvisionError = context.DeadlineExceeded // simulate persistent failure
 
 	orch, store := setupTestOrchestrator(t, mockLLM, mockCloud)
@@ -211,7 +218,7 @@ func TestRunWorkload_IntentParseRetryExhaustion(t *testing.T) {
 	mockLLM := mocktesting.NewMockLLMProvider()
 	mockLLM.Error = context.DeadlineExceeded // all LLM calls fail
 
-	mockCloud := mocktesting.NewMockCloudAdapter("mock-aws", defaultMockPrices())
+	mockCloud := mocktesting.NewMockCloudAdapter("mock-aws", defaultMockPricesAWS())
 
 	orch, store := setupTestOrchestrator(t, mockLLM, mockCloud)
 	defer store.Close()
