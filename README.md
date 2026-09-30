@@ -1,3 +1,7 @@
+<p align="left">
+  <img src="pkg/assets/beacon-logo.jpeg" alt="Beacon" width="250"/>
+</p>
+
 # Beacon — Agentic Shopper For Cloud Compute
 
 Beacon autonomously discovers, bids on, provisions, and decommissions cloud spot instances based on natural language workload intents. It uses LLMs to parse user intents and evaluate spot pricing options, driving a complete lifecycle state machine from discovery to teardown.
@@ -67,7 +71,7 @@ Running `beacon run --intent 'Train ResNet on 4xA100 under $50'` triggers the fo
 sequenceDiagram
     participant User as User (CLI)
     participant Orch as Orchestrator
-    participant LLM as LLM Provider<br/>(Ollama/OpenAI)
+    participant LLM as LLM Provider
     participant AWS as AWS EC2 Spot
     participant GCP as GCP Compute
     participant Pay as Payment Gateway
