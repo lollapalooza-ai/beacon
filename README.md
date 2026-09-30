@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="pkg/assets/beacon-logo.jpeg" alt="Beacon" width="75%" height="75%" />
+  <img src="pkg/assets/beacon-logo.jpeg" alt="Beacon" width="75%" />
 </p>
 
 # Beacon — Agentic Shopper For Cloud Compute
@@ -186,4 +186,4 @@ beacon/
 
 ## License
 
-TBD
+This project is licensed under the [Apache License 2.0](LICENSE).
