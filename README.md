@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="pkg/assets/beacon-logo.jpeg" alt="Beacon" width="100%" />
+  <img src="pkg/assets/beacon-logo.jpeg" alt="Beacon" width="75%" height="75%" />
 </p>
 
 # Beacon — Agentic Shopper For Cloud Compute
