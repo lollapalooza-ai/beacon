@@ -119,15 +119,15 @@ func (a *Adapter) ProvisionInstance(ctx context.Context, req *cloud.ProvisionReq
 	// For MVP, we'll use a standard Debian or Ubuntu image
 	sourceImage := req.ImageID
 	if sourceImage == "" {
-		sourceImage = "projects/debian-cloud/global/images/family/debian-11"
+		sourceImage = "projects/debian-cloud/global/images/family/debian-12"
 	}
 
 	instanceName := fmt.Sprintf("beacon-spot-%d", time.Now().UnixNano())
 
-	// Build Labels
+	// Build Labels — GCP requires lowercase keys with only letters, digits, underscores, dashes
 	labels := make(map[string]string)
 	for k, v := range req.Tags {
-		labels[k] = v
+		labels[sanitizeLabelKey(k)] = v
 	}
 
 	storageGiB := int64(req.StorageGiB)
@@ -333,6 +333,31 @@ func (a *Adapter) TerminateInstance(ctx context.Context, instanceID string, regi
 // Utility functions for GCP pointers
 func strPtr(s string) *string { return &s }
 func boolPtr(b bool) *bool    { return &b }
+
+// sanitizeLabelKey converts a tag key to a GCP-compliant label key.
+// GCP labels must start with a lowercase letter and contain only lowercase letters,
+// digits, underscores, and dashes.
+func sanitizeLabelKey(key string) string {
+	var result []byte
+	for i, ch := range key {
+		if ch >= 'A' && ch <= 'Z' {
+			if i > 0 {
+				result = append(result, '_')
+			}
+			result = append(result, byte(ch-'A'+'a'))
+		} else if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
+			result = append(result, byte(ch))
+		}
+	}
+	if len(result) == 0 {
+		return "label"
+	}
+	// Ensure it starts with a letter
+	if result[0] >= '0' && result[0] <= '9' {
+		result = append([]byte{'l', '_'}, result...)
+	}
+	return string(result)
+}
 
 func parseURLParts(url string) []string {
 	var res []string

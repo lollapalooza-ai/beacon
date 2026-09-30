@@ -1,8 +1,8 @@
-# Beacon — Autonomous Cloud Compute Procurement Agent
+# Beacon — Agentic Shopper For Cloud Compute
 
 Beacon autonomously discovers, bids on, provisions, and decommissions cloud spot instances based on natural language workload intents. It uses LLMs to parse user intents and evaluate spot pricing options, driving a complete lifecycle state machine from discovery to teardown.
 
-## Features (Community Edition MVP)
+## Features
 
 - **Model-Agnostic LLM Layer** — Ollama, OpenAI, Anthropic, and Gemini support behind a single `Provider` interface
 - **Multi-Cloud Spot Integration** — Real spot pricing queries and instance provisioning via AWS EC2 and Google Cloud (GCP) Spot VMs
@@ -59,6 +59,109 @@ All configuration is via environment variables:
 | `BEACON_MAX_DISCOVERY_RETRIES` | `5` | Max discovery retry attempts |
 | `BEACON_RATE_LIMIT` | `10.0` | Cloud API rate limit (requests/sec) |
 
+## How It Works — Example Run
+
+Running `beacon run --intent 'Train ResNet on 4xA100 under $50'` triggers the following autonomous flow:
+
+```mermaid
+sequenceDiagram
+    participant User as User (CLI)
+    participant Orch as Orchestrator
+    participant LLM as LLM Provider<br/>(Ollama/OpenAI)
+    participant AWS as AWS EC2 Spot
+    participant GCP as GCP Compute
+    participant Pay as Payment Gateway
+    participant DB as SQLite Store
+
+    User->>Orch: "Train ResNet on 4xA100 under $50"
+    Orch->>DB: Create workload (state: pending)
+
+    Note over Orch: Phase 1 — Discovery
+    Orch->>LLM: Parse intent → structured requirements
+    LLM-->>Orch: gpu_type=A100, gpu_count=4, budget=$50
+
+    par Query all cloud providers concurrently
+        Orch->>AWS: QuerySpotPrices(A100, ≥4 GPUs)
+        AWS-->>Orch: p4d.24xlarge @ $11.50/hr (or error)
+        Orch->>GCP: QuerySpotPrices(A100, ≥4 GPUs)
+        GCP-->>Orch: a2-highgpu-4g @ $4.40/hr
+    end
+
+    Note over Orch: Phase 2 — Bidding
+    Orch->>LLM: Evaluate & rank all spot options
+    LLM-->>Orch: Selected: a2-highgpu-4g (score 93, lowest price)
+
+    Note over Orch: Phase 3 — Authorization
+    Orch->>Pay: AuthorizeBudget($100, merchant=gcp)
+    Pay-->>Orch: Token issued ✓
+
+    Note over Orch: Phase 4 — Provisioning
+    Orch->>GCP: ProvisionInstance(a2-highgpu-4g, spot=true)
+    GCP-->>Orch: Instance running (beacon-spot-xxx)
+    Orch->>DB: Update workload (state: running)
+
+    Note over Orch: Phase 5 — Monitoring
+    loop Every 30 seconds
+        Orch->>GCP: GetInstanceStatus
+        GCP-->>Orch: Running, healthy ✓
+    end
+
+    Note over Orch: Phase 6 — Decommission
+    Orch->>GCP: TerminateInstance
+    Orch->>Pay: RevokeToken
+    Orch->>DB: Update workload (state: completed)
+    Orch-->>User: Workload completed ✓
+```
+
+## Workload State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending
+    Pending --> Discovering: Parse intent via LLM
+    Discovering --> Bidding: Spot prices found
+    Discovering --> Failed: No spots / LLM error
+    Bidding --> Authorizing: Best bid selected
+    Bidding --> Failed: No viable bids
+    Authorizing --> Provisioning: Budget token issued
+    Authorizing --> Failed: Authorization denied
+    Provisioning --> Running: Instance launched
+    Provisioning --> Failed: Retries exhausted
+    Running --> Decommissioning: Work complete / signal
+    Running --> Decommissioning: Instance interrupted
+    Decommissioning --> Completed: Cleanup done
+    Decommissioning --> Failed: Cleanup error
+    Failed --> [*]
+    Completed --> [*]
+```
+
+## Architecture
+
+```mermaid
+flowchart TD
+    CLI["beacon run --intent '...'"]
+    CLI --> Orch["Orchestrator State Machine"]
+
+    Orch --> LLM["LLM Abstraction Layer"]
+    Orch --> Cloud["Cloud Adapter Layer"]
+    Orch --> Pay["Payment Gateway"]
+    Orch --> Store["SQLite State Store"]
+
+    LLM --> Ollama["Ollama (local)"]
+    LLM --> OpenAI["OpenAI"]
+    LLM --> Anthropic["Anthropic"]
+    LLM --> Gemini["Gemini"]
+
+    Cloud --> CB["Circuit Breaker + Rate Limiter"]
+    CB --> AWS["AWS EC2 Spot"]
+    CB --> GCP["GCP Compute Spot VMs"]
+
+    Pay --> Stub["Stub Gateway (MVP)"]
+
+    Store --> Recovery["Crash Recovery"]
+    Store --> Events["Audit Event Log"]
+```
+
 ## Project Structure
 
 ```
@@ -67,31 +170,14 @@ beacon/
 ├── pkg/
 │   ├── orchestrator/        # Core state machine, intent parsing, bidding
 │   ├── llm/                 # Model-agnostic LLM abstraction (4 providers)
-│   ├── cloud/               # Cloud adapter interface + AWS EC2 Spot
-│   │   └── aws/             # AWS EC2 Spot adapter
+│   ├── cloud/               # Cloud adapter interface
+│   │   ├── aws/             # AWS EC2 Spot adapter
+│   │   └── gcp/             # GCP Compute Spot VM adapter
 │   ├── payment/             # Payment gateway interface + stub
 │   ├── state/               # SQLite state persistence + crash recovery
 │   └── config/              # Environment-based configuration
 ├── internal/testing/        # Mock cloud server + test harnesses
-├── design/                  # Design documents
 └── docs/                    # ADRs and API specs
-```
-
-## Architecture
-
-```
-User Intent (CLI) → Orchestrator State Machine
-                         │
-    ┌────────────────────┼────────────────────┐
-    ▼                    ▼                    ▼
-LLM Provider       Cloud Adapter       Payment Gateway
-(parse intent,      (spot pricing,       (budget auth,
- rank bids)          provision,           token mgmt)
-                     terminate)
-    │                    │                    │
-    ▼                    ▼                    ▼
-Ollama/OpenAI/      AWS EC2 Spot         Stub Gateway
-Anthropic/Gemini    (+ circuit breaker)  (MVP)
 ```
 
 ## License
