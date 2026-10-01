@@ -160,7 +160,7 @@ flowchart TD
     CB --> AWS["AWS EC2 Spot"]
     CB --> GCP["GCP Compute Spot VMs"]
 
-    Pay --> Stub["Stub Gateway (MVP)"]
+    Pay --> Gateway["Gateway"]
 
     Store --> Recovery["Crash Recovery"]
     Store --> Events["Audit Event Log"]
@@ -171,6 +171,7 @@ flowchart TD
 ```
 beacon/
 ├── cmd/beacon/              # CLI entry point (cobra)
+├── cmd/catalog-builder/     # GCP Pricing Catalog updater
 ├── pkg/
 │   ├── orchestrator/        # Core state machine, intent parsing, bidding
 │   ├── llm/                 # Model-agnostic LLM abstraction (4 providers)

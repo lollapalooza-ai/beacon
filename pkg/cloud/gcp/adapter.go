@@ -10,28 +10,41 @@ import (
 	"github.com/lollapalooza-ai/beacon/pkg/cloud"
 	"github.com/rs/zerolog"
 	"google.golang.org/api/option"
+	_ "embed"
+	"encoding/json"
+	"sync"
 )
 
-// instanceSpec holds hardware specifications and estimated spot prices for GCP instances.
-// In GCP, actual spot pricing isn't queryable via a simple API like AWS EC2 DescribeSpotPriceHistory.
-// For the MVP, we use estimated prices.
-type instanceSpec struct {
-	GPUType   string
-	GPUCount  int
-	VCPUs     int
-	MemoryGiB float64
-	EstPrice  float64 // Estimated spot price per hour in USD
+//go:embed catalog.json
+var catalogJSON []byte
+
+type CatalogFile struct {
+	UpdatedAt time.Time               `json:"updated_at"`
+	Instances map[string]instanceSpec `json:"instances"`
 }
 
-var instanceSpecs = map[string]instanceSpec{
-	"a2-highgpu-1g": {GPUType: "A100", GPUCount: 1, VCPUs: 12, MemoryGiB: 85, EstPrice: 1.10},
-	"a2-highgpu-2g": {GPUType: "A100", GPUCount: 2, VCPUs: 24, MemoryGiB: 170, EstPrice: 2.20},
-	"a2-highgpu-4g": {GPUType: "A100", GPUCount: 4, VCPUs: 48, MemoryGiB: 340, EstPrice: 4.40},
-	"a2-highgpu-8g": {GPUType: "A100", GPUCount: 8, VCPUs: 96, MemoryGiB: 680, EstPrice: 8.80},
-	"g2-standard-4": {GPUType: "L4", GPUCount: 1, VCPUs: 4, MemoryGiB: 16, EstPrice: 0.25},
-	"g2-standard-8": {GPUType: "L4", GPUCount: 1, VCPUs: 8, MemoryGiB: 32, EstPrice: 0.35},
-	"g2-standard-12":{GPUType: "L4", GPUCount: 1, VCPUs: 12, MemoryGiB: 48, EstPrice: 0.45},
-	"g2-standard-24":{GPUType: "L4", GPUCount: 2, VCPUs: 24, MemoryGiB: 96, EstPrice: 0.90},
+// instanceSpec holds hardware specifications and estimated spot prices for GCP instances.
+type instanceSpec struct {
+	GPUType   string  `json:"gpu_type"`
+	GPUCount  int     `json:"gpu_count"`
+	VCPUs     int     `json:"vcpus"`
+	MemoryGiB float64 `json:"memory_gib"`
+	EstPrice  float64 `json:"spot_price"` // spot price per hour in USD
+}
+
+var (
+	instanceSpecs map[string]instanceSpec
+	catalogOnce   sync.Once
+)
+
+func loadCatalog() {
+	catalogOnce.Do(func() {
+		var cat CatalogFile
+		if err := json.Unmarshal(catalogJSON, &cat); err != nil {
+			panic(fmt.Sprintf("Failed to load embedded GCP catalog: %v", err))
+		}
+		instanceSpecs = cat.Instances
+	})
 }
 
 // Adapter implements the cloud.Adapter interface for GCP Compute Engine Spot VMs.
@@ -55,6 +68,7 @@ func (a *Adapter) Name() string {
 
 // QuerySpotPrices returns available GCP instance types and their estimated spot prices.
 func (a *Adapter) QuerySpotPrices(ctx context.Context, req *cloud.SpotPriceRequest) ([]cloud.SpotPrice, error) {
+	loadCatalog()
 	var prices []cloud.SpotPrice
 	now := time.Now()
 

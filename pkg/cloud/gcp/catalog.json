@@ -1,0 +1,12 @@
+{
+  "updated_at": "2026-10-01T04:10:38.507949Z",
+  "instances": {
+    "a2-highgpu-4g": {
+      "gpu_type": "A100",
+      "gpu_count": 4,
+      "vcpus": 48,
+      "memory_gib": 340,
+      "spot_price": 8.816040000000001
+    }
+  }
+}
